@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "repoview"
-version = "1.0.0"
-description = "Generate LLM-ready context files from your codebase — interactively."
+version = "1.1.0"
+description = "Turn any codebase into LLM-ready context — in seconds."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Your Name", email = "you@example.com" }]
-keywords = ["llm", "context", "code", "ai", "cli", "developer-tools"]
+keywords = ["llm", "context", "code", "ai", "cli", "developer-tools", "chatgpt", "claude"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -20,7 +20,6 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities",
 ]
 requires-python = ">=3.9"
@@ -30,24 +29,18 @@ dependencies = [
     "questionary>=2.0.1",
     "rich>=13.0.0",
     "typer>=0.12.0",
+    "pyperclip>=1.8.2",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "build",
-    "twine",
-    "pytest",
-    "pytest-cov",
-]
+dev = ["build", "twine", "pytest"]
 
 [project.scripts]
-codecontext = "codecontext.cli:app"
-cc = "codecontext.cli:app"
+repoview = "repoview.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/yourname/codecontext"
-Issues = "https://github.com/yourname/codecontext/issues"
+Homepage = "https://github.com/yourname/repoview"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["codecontext*"]
+include = ["repoview*"]
