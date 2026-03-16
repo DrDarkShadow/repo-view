@@ -1,0 +1,9 @@
+export { Hero } from './Hero';
+export { Problem } from './Problem';
+export { HowItWorks } from './HowItWorks';
+export { Features } from './Features';
+export { WatchMode } from './WatchMode';
+export { Commands } from './Commands';
+export { ForWho } from './ForWho';
+export { QuickStart } from './QuickStart';
+export { Footer } from './Footer';

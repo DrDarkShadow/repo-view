@@ -40,7 +40,7 @@ dev = ["build", "twine", "pytest"]
 repoview = "repoview.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/yourname/repoview"
+Homepage = "https://github.com/drdarkshadow/repoview"
 
 [tool.setuptools.packages.find]
 where = ["."]
