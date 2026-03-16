@@ -388,6 +388,8 @@ class GenerateResult:
     files_metadata: int = 0
     files_omitted: int = 0
     warnings: List[str] = field(default_factory=list)
+    # populated after run — used by cache + differ
+    all_entries: List[Any] = field(default_factory=list)
 
 
 # ── Main orchestrator ─────────────────────────────────────────────────────────
@@ -519,4 +521,19 @@ def generate_context(
         )
 
     result.total_tokens = actual
+    result.all_entries = entries
+
+    # Save cache after every successful full run
+    try:
+        from repoview.cache import build_cache, save_cache
+        settings = {
+            "skip_docs":         skip_docs,
+            "skip_tests":        skip_tests,
+            "respect_gitignore": respect_gitignore,
+        }
+        cache = build_cache(input_path, output_path, settings, entries)
+        save_cache(cache)
+    except Exception:
+        pass   # cache failure never breaks the main run
+
     return result

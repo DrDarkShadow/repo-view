@@ -1,10 +1,10 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+build-backend = "setuptools.backends.legacy:build"
 
 [project]
 name = "repoview"
-version = "1.1.0"
+version = "1.2.0"
 description = "Turn any codebase into LLM-ready context — in seconds."
 readme = "README.md"
 license = { text = "MIT" }
@@ -30,6 +30,7 @@ dependencies = [
     "rich>=13.0.0",
     "typer>=0.12.0",
     "pyperclip>=1.8.2",
+    "watchdog>=4.0.0",
 ]
 
 [project.optional-dependencies]

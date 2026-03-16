@@ -35,6 +35,8 @@ from rich.table import Table
 from rich.text import Text
 
 from repoview import __version__
+from repoview.cache import load_cache, diff_cache, build_cache, save_cache
+from repoview.differ import incremental_update, UpdateResult
 from repoview.core import generate_context, GenerateResult
 from repoview.scanner import scan_project, ScanResult
 from repoview.config import TOKEN_BUDGET
@@ -136,6 +138,159 @@ def _ask(prompt, **kwargs):
     return result
 
 
+def _try_incremental(
+    input_path: str,
+    cached,
+    scan,
+) -> bool:
+    """
+    Automatic incremental update — no prompts, no choices.
+
+    Logic:
+      - No changes detected  →  go straight to post menu (nothing to do)
+      - Changes detected     →  auto incremental update, then post menu
+      - Incremental fails    →  return False so caller falls through to full wizard
+
+    Returns True if we handled everything, False if full wizard should run.
+    """
+    from repoview.core import collect_folder
+
+    # ── Diff ─────────────────────────────────────────────────────────────────
+    entries = collect_folder(
+        input_path,
+        respect_gitignore=cached.settings.get("respect_gitignore", True),
+    )
+    diff = diff_cache(cached, entries)
+
+    # ── No changes ────────────────────────────────────────────────────────────
+    if not diff.has_changes:
+        console.print(
+            f"  [green]✔[/green]  Context is already up to date  "
+            f"[dim]({cached.age_human()})[/dim]\n"
+        )
+        _post_menu_from_path(cached.output_path)
+        return True
+
+    # ── Show what changed (informational, no prompt) ──────────────────────────
+    console.print(
+        f"  [bold]Changes since last run[/bold]  "
+        f"[dim]({cached.age_human()})[/dim]\n"
+    )
+    if diff.modified:
+        for f in diff.modified[:8]:
+            console.print(f"    [yellow]✎[/yellow]  {f}")
+        if len(diff.modified) > 8:
+            console.print(f"    [dim]… and {len(diff.modified)-8} more modified[/dim]")
+    if diff.added:
+        for f in diff.added[:5]:
+            console.print(f"    [green]+[/green]  {f}")
+        if len(diff.added) > 5:
+            console.print(f"    [dim]… and {len(diff.added)-5} more added[/dim]")
+    if diff.deleted:
+        for f in diff.deleted[:5]:
+            console.print(f"    [red]-[/red]  {f}")
+        if len(diff.deleted) > 5:
+            console.print(f"    [dim]… and {len(diff.deleted)-5} more deleted[/dim]")
+    console.print()
+
+    # ── Auto incremental update ───────────────────────────────────────────────
+    skip_docs  = cached.settings.get("skip_docs",  True)
+    skip_tests = cached.settings.get("skip_tests", True)
+
+    affected_rels = set(diff.modified) | set(diff.added)
+    for e in entries:
+        if not e.is_dir and e.relative_path in affected_rels:
+            e.process(skip_docs=skip_docs, skip_tests=skip_tests)
+
+    start = time.time()
+    with Progress(
+        SpinnerColumn(spinner_name="dots", style="#7c3aed"),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=28, complete_style="#7c3aed", finished_style="#06b6d4"),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as prog:
+        task = prog.add_task(
+            f"Updating {diff.total_changes} file(s)…",
+            total=diff.total_changes,
+        )
+        done_box   = [0]
+        result_box = [None]
+        error_box  = [None]
+
+        def _inc_cb(done: int, total: int) -> None:
+            done_box[0] = done
+            prog.update(task, completed=done)
+
+        def _worker():
+            try:
+                result_box[0] = incremental_update(
+                    project_path=input_path,
+                    cache=cached,
+                    diff=diff,
+                    all_entries=entries,
+                    progress_cb=_inc_cb,
+                )
+            except Exception as e:
+                error_box[0] = e
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        while t.is_alive():
+            prog.update(task, completed=done_box[0])
+            time.sleep(0.05)
+        t.join()
+
+    if error_box[0]:
+        console.print(f"\n[red]✗ Update failed:[/red] {error_box[0]}")
+        console.print("[dim]Falling back to full regeneration…[/dim]\n")
+        return False
+
+    upd: UpdateResult = result_box[0]
+    _print_update_result(upd, time.time() - start)
+
+    gr = GenerateResult(
+        output_path=upd.output_path,
+        total_tokens=upd.total_tokens,
+        warnings=upd.warnings,
+    )
+    _post_menu(gr)
+    return True
+
+
+def _print_update_result(upd: UpdateResult, elapsed: float) -> None:
+    console.print(f"[bold green]✔[/bold green] Updated in [bold]{elapsed:.1f}s[/bold]\n")
+
+    pct = upd.total_tokens / TOKEN_BUDGET * 100
+    bar_len = 24
+    filled = int(bar_len * min(pct, 100) / 100)
+    color = "green" if pct < 75 else "yellow" if pct < 95 else "red"
+    bar = f"[{color}]{'█' * filled}[/{color}][dim]{'░' * (bar_len - filled)}[/dim]"
+
+    table = Table(show_header=False, box=None, padding=(0, 2), show_edge=False)
+    table.add_column(style="dim", justify="right", min_width=14)
+    table.add_column()
+    table.add_row("Output",    f"[bold cyan]{upd.output_path}[/bold cyan]")
+    table.add_row("Tokens",    f"{bar}  [bold]{upd.total_tokens:,}[/bold] / {TOKEN_BUDGET:,}")
+    table.add_row("Updated",   f"[yellow]{upd.files_updated}[/yellow] file(s)")
+    table.add_row("Added",     f"[green]{upd.files_added}[/green] file(s)")
+    table.add_row("Removed",   f"[red]{upd.files_removed}[/red] file(s)")
+    console.print(Panel(table, border_style="green", padding=(0, 1)))
+
+    for w in upd.warnings:
+        console.print(f"\n  [yellow]⚠[/yellow]  {w}")
+    console.print()
+
+
+def _post_menu_from_path(output_path: str) -> None:
+    """Post menu when we have a path but no fresh GenerateResult."""
+    from repoview.core import GenerateResult
+    gr = GenerateResult(output_path=output_path, total_tokens=0)
+    _post_menu(gr)
+
+
 def _run_wizard(preset_path: Optional[str] = None) -> None:
     _banner()
 
@@ -161,6 +316,13 @@ def _run_wizard(preset_path: Optional[str] = None) -> None:
     # ── Scan ─────────────────────────────────────────────────────────────────
     scan = scan_project(input_path)
     _show_scan(scan, folder_name)
+
+    # ── Diff check — offer incremental update if cache exists ────────────────
+    cached = load_cache(input_path)
+    if cached and os.path.exists(cached.output_path):
+        did_incremental = _try_incremental(input_path, cached, scan)
+        if did_incremental:
+            return   # user accepted incremental — we're done
 
     # ── Q1: Skip docs? (always shown) ────────────────────────────────────────
     doc_info = (
@@ -571,6 +733,14 @@ def main(
         False, "--quick", "-q",
         help="Skip all questions. Use sensible defaults.",
     ),
+    watch: bool = typer.Option(
+        False, "--watch", "-w",
+        help="Watch for file changes and auto-update context.",
+    ),
+    reset: bool = typer.Option(
+        False, "--reset", "-r",
+        help="Delete saved cache for this project and run the wizard fresh.",
+    ),
 ) -> None:
     """
     [bold #7c3aed]repoview[/bold #7c3aed] — Turn any codebase into LLM-ready context.
@@ -584,7 +754,11 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    if quick:
+    if reset:
+        _run_reset(path)
+    elif watch:
+        _run_watch(path)
+    elif quick:
         _run_quick(path)
     else:
         _run_wizard(preset_path=path)
@@ -620,3 +794,226 @@ def _run_quick(path: Optional[str]) -> None:
     )
     if result:
         _post_menu(result)
+
+
+def _run_reset(path: Optional[str]) -> None:
+    """
+    Delete the cache for this project and run the wizard fresh.
+    Useful when settings are wrong and user wants to start over.
+    """
+    from repoview.cache import delete_cache, cache_path_for
+
+    _banner()
+
+    input_path  = os.path.abspath(path or os.getcwd())
+    folder_name = os.path.basename(input_path.rstrip("/\\"))
+
+    if not os.path.exists(input_path):
+        console.print(f"[red]✗[/red] Path not found: {input_path}")
+        raise typer.Exit(1)
+
+    cache_file = cache_path_for(input_path)
+
+    if cache_file.exists():
+        delete_cache(input_path)
+        console.print(
+            f"  [green]✔[/green]  Cache cleared for [bold]{folder_name}[/bold]\n"
+            f"  [dim]{cache_file}[/dim]\n"
+        )
+    else:
+        console.print(
+            f"  [dim]No cache found for [bold]{folder_name}[/bold] — nothing to clear.[/dim]\n"
+        )
+
+    console.print("  Starting wizard with fresh settings…\n")
+    _run_wizard(preset_path=input_path)
+
+
+def _run_watch(path: Optional[str]) -> None:
+    """
+    Watch mode — auto incremental update on every file save.
+
+    Flow:
+      No cache  →  wizard runs (user sets settings) → generation → watch starts
+      Cache exists → watch starts immediately (settings loaded from cache)
+      Ctrl+C    →  stop + show reset hint
+    """
+    from repoview.watcher import watch, WATCHDOG_AVAILABLE
+    from repoview.differ import incremental_update
+    from repoview.core import collect_folder
+
+    _banner()
+
+    if not WATCHDOG_AVAILABLE:
+        console.print(
+            "[red]✗[/red] watchdog is not installed.\n"
+            "  Run:  [bold]pip install watchdog[/bold]\n"
+        )
+        raise typer.Exit(1)
+
+    input_path  = os.path.abspath(path or os.getcwd())
+    folder_name = os.path.basename(input_path.rstrip("/\\"))
+
+    if not os.path.exists(input_path):
+        console.print(f"[red]✗[/red] Path not found: {input_path}")
+        raise typer.Exit(1)
+
+    # ── Check cache ───────────────────────────────────────────────────────────
+    cached = load_cache(input_path)
+
+    if cached is None or not os.path.exists(cached.output_path):
+        # ── First time: run full wizard so user controls settings ─────────────
+        console.print(
+            "  [bold yellow]First time setup[/bold yellow]\n"
+            "  [dim]No previous context found for this project.\n"
+            "  The wizard will run once so you can choose your settings.\n"
+            "  Watch mode will start automatically after generation.[/dim]\n"
+        )
+
+        # Run the wizard — it saves cache on completion
+        _run_wizard(preset_path=input_path)
+
+        # Reload cache written by generate_context inside wizard
+        cached = load_cache(input_path)
+        if cached is None:
+            console.print(
+                "\n[red]✗[/red] Cache not found after generation.\n"
+                "  [dim]Cannot start watch mode.[/dim]\n"
+            )
+            raise typer.Exit(1)
+
+        console.print()
+        console.print(
+            "  [bold #7c3aed]✔  Generation complete — starting watch mode[/bold #7c3aed]\n"
+        )
+
+    # ── Load settings from cache ──────────────────────────────────────────────
+    output_path = cached.output_path
+    skip_docs   = cached.settings.get("skip_docs",         True)
+    skip_tests  = cached.settings.get("skip_tests",        True)
+    respect_gi  = cached.settings.get("respect_gitignore", True)
+
+    # Build a readable settings summary line
+    setting_parts = []
+    if skip_docs:   setting_parts.append("docs skipped")
+    else:           setting_parts.append("docs included")
+    if skip_tests:  setting_parts.append("tests skipped")
+    else:           setting_parts.append("tests included")
+    if respect_gi:  setting_parts.append("gitignore respected")
+    else:           setting_parts.append("gitignore ignored")
+    settings_line = "  •  ".join(setting_parts)
+
+    # ── Print watch header ────────────────────────────────────────────────────
+    console.print(
+        Panel.fit(
+            Text.from_markup(
+                f"[bold #7c3aed]👁  Watching[/]  [bold]{folder_name}/[/bold]\n"
+                f"[dim]Output    →  {output_path}[/dim]\n"
+                f"[dim]Settings  →  {settings_line}[/dim]\n"
+                f"[dim]Press Ctrl+C to stop[/dim]"
+            ),
+            border_style="#7c3aed",
+            padding=(0, 2),
+        )
+    )
+    console.print()
+
+    # ── Shared state ──────────────────────────────────────────────────────────
+    _lock    = threading.Lock()
+    _running = threading.Event()
+    _running.set()
+
+    def _on_change(changed_paths: List[str]) -> None:
+        """Called from watcher thread after debounce."""
+        if not _running.is_set():
+            return
+
+        now = time.strftime("%H:%M:%S")
+
+        if len(changed_paths) == 1:
+            console.print(
+                f"  [dim]{now}[/dim]  "
+                f"[yellow]{changed_paths[0]}[/yellow] changed"
+            )
+        else:
+            console.print(
+                f"  [dim]{now}[/dim]  "
+                f"[yellow]{changed_paths[0]}[/yellow]  "
+                f"[dim]+ {len(changed_paths)-1} more[/dim] changed"
+            )
+
+        # Reload cache — may have been updated by a previous cycle
+        current_cache = load_cache(input_path)
+        if current_cache is None:
+            console.print(
+                f"  [dim]{now}[/dim]  "
+                f"[red]✗[/red] Cache lost — "
+                f"run [bold]repoview --reset {input_path}[/bold] to reinitialise."
+            )
+            return
+
+        # Diff + process only affected files
+        entries = collect_folder(input_path, respect_gitignore=respect_gi)
+        diff    = diff_cache(current_cache, entries)
+
+        if not diff.has_changes:
+            # File was touched but content unchanged (e.g. editor auto-save)
+            return
+
+        affected = set(diff.modified) | set(diff.added)
+        for e in entries:
+            if not e.is_dir and e.relative_path in affected:
+                e.process(skip_docs=skip_docs, skip_tests=skip_tests)
+
+        with _lock:
+            try:
+                upd = incremental_update(
+                    project_path=input_path,
+                    cache=current_cache,
+                    diff=diff,
+                    all_entries=entries,
+                )
+                pct   = upd.total_tokens / TOKEN_BUDGET * 100
+                color = "green" if pct < 75 else "yellow" if pct < 95 else "red"
+                console.print(
+                    f"  [dim]{now}[/dim]  "
+                    f"[green]✔[/green] "
+                    f"Updated in [bold]{upd.elapsed:.1f}s[/bold]  "
+                    f"[{color}]{upd.total_tokens:,}[/{color}] tokens  "
+                    f"[dim](+{upd.files_added} ✎{upd.files_updated} -{upd.files_removed})[/dim]"
+                )
+                for w in upd.warnings:
+                    console.print(f"  [yellow]⚠[/yellow]  {w}")
+
+            except Exception as e:
+                console.print(
+                    f"  [dim]{now}[/dim]  [red]✗ Update failed:[/red] {e}"
+                )
+
+    # ── Start watcher (blocks until Ctrl+C) ───────────────────────────────────
+    try:
+        watch(input_path, on_change=_on_change)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _running.clear()
+
+    # ── Ctrl+C — show clear guidance ──────────────────────────────────────────
+    console.print()
+    console.print(
+        Panel(
+            Text.from_markup(
+                "[bold]Watch stopped.[/bold]\n\n"
+                f"[dim]Settings used:  {settings_line}[/dim]\n"
+                f"[dim]Output:         {output_path}[/dim]\n\n"
+                "To resume watching with the [bold]same settings[/bold]:\n"
+                f"  [bold cyan]repoview --watch {input_path}[/bold cyan]\n\n"
+                "To change settings, reset the cache first:\n"
+                f"  [bold cyan]repoview --reset {input_path}[/bold cyan]\n"
+                f"  [bold cyan]repoview --watch {input_path}[/bold cyan]"
+            ),
+            border_style="dim",
+            padding=(0, 2),
+        )
+    )
+    console.print()
