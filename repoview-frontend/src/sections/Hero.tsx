@@ -28,7 +28,7 @@ export function Hero() {
               <CopyButton text={installCommand} label="Copy" />
             </div>
             <a
-              href="https://github.com"
+              href="https://github.com/drdarkshadow/repo-view"
               target="_blank"
               rel="noopener noreferrer"
               className="btn-primary-outline gap-2"

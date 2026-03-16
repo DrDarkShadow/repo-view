@@ -1,6 +1,7 @@
 """All constants and classification rules for repoview."""
 
 # ── Priorities ────────────────────────────────────────────────────────────────
+PRIORITY_FOCUS               = 0   # focus mode — always full, never trimmed
 PRIORITY_ESSENTIAL           = 1
 PRIORITY_IMPORTANT_CODE      = 2
 PRIORITY_SUPPORTING_CONFIG   = 3
@@ -81,3 +82,8 @@ MAX_SIGNATURES_SUMMARY   = 20
 MAX_LINES_FALLBACK       = 20
 MAX_CHARS_TEXT_PREVIEW   = 3000
 TOKEN_BUDGET             = 800_000
+
+# ── Cache (stored in ~/.repoview/cache/) ──────────────────────────────────────
+CACHE_DIR_NAME           = ".repoview"
+CACHE_FILE_NAME          = "cache.json"
+WATCH_DEBOUNCE_SECONDS   = 2.0

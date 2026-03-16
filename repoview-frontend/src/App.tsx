@@ -4,6 +4,7 @@ import {
   HowItWorks,
   Features,
   WatchMode,
+  FocusMode,
   Commands,
   ForWho,
   QuickStart,
@@ -18,6 +19,7 @@ function App() {
       <HowItWorks />
       <Features />
       <WatchMode />
+      <FocusMode />
       <Commands />
       <ForWho />
       <QuickStart />

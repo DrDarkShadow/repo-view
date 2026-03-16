@@ -276,6 +276,52 @@ Full details in the [Watch Mode](#watch-mode) section below.
 
 ---
 
+### `--focus <path>` / `-f`
+
+Focus mode — generate context for a **specific folder or file** only. Everything else appears in the directory tree but has no file content. Essential files (`README.md`, `package.json`, etc.) are always included regardless.
+
+```bash
+# Focus on a subfolder
+repoview --focus src/auth ./my-project
+repoview --focus src/api/users
+
+# Focus on a specific file
+repoview --focus src/auth/index.ts ./my-project
+
+# Focus + watch (the killer combo)
+repoview --watch --focus src/auth ./my-project
+```
+
+**Why this is useful:**
+
+Normal run on a large project = 147 files, 142,000 tokens. You're only fixing a bug in `src/auth/` — the AI has to find the relevant parts itself.
+
+Focus run = 8 files full content, 18,000 tokens, full project tree still visible. The AI sees exactly what you're working on, plus understands how it fits into the broader project.
+
+**What focus mode asks:**
+
+The wizard is shorter — no skip docs/tests questions (irrelevant when focused):
+
+1. Respect `.gitignore`? *(only if `.gitignore` exists)*
+2. Output filename? *(default: `<project>-<focus-slug>-context.txt`)*
+3. Output location?
+
+**Output file behaviour:**
+
+- Files **inside** the focus path → full content (always, never trimmed)
+- Essential files (`README.md`, `package.json`, etc.) → full content (always)
+- Everything **outside** the focus path → tree entry only, no content block
+
+**`--watch --focus` combined:**
+
+```bash
+repoview --watch --focus src/auth ./my-project
+```
+
+Watch mode uses the same focus settings. Every save inside `src/auth/` updates the context instantly. Changes outside the focus path are detected but produce no output changes (structure-only files have no content to update).
+
+---
+
 ### `--reset` / `-r`
 
 Deletes the saved cache for a project and runs the wizard fresh. Use this when your settings are wrong and you want to start over — different skip choices, different output location, etc.
@@ -458,6 +504,7 @@ repoview assigns every file a priority level which controls both the order files
 
 | Priority | Level | What's included |
 |----------|-------|-----------------|
+| 0 | **Focus** | Files inside `--focus` path — always full content, never summarised or omitted |
 | 1 | **Essential** | `README.md` · `package.json` · `requirements.txt` · `Dockerfile` · `pyproject.toml` · `manage.py` · `main.py` · `app.py` · `go.mod` · `tsconfig.json` · `docker-compose.yml` · `vite.config.ts` · `.env.example` · `cargo.toml` · and other project-definition files |
 | 2 | **Important Code** | `.py` `.js` `.ts` `.tsx` `.jsx` `.go` `.rs` `.java` `.cs` `.cpp` `.c` `.h` `.rb` `.php` `.swift` `.kt` `.vue` `.svelte` `.sql` `.graphql` `.proto` `.sol` `.scss` `.css` `.html` |
 | 3 | **Config & Support** | `.json` `.yml` `.yaml` `.toml` `.ini` `.env` `.sh` `.bat` `.ps1` `.tf` `.tfvars` `.xml` `.conf` `.cfg` |
@@ -491,7 +538,7 @@ Lower-priority files are replaced with a summary instead of their full content. 
 - **Other code files**: function and class signatures extracted via regex patterns. Works across JS, TS, Go, Java, C++, and most other languages.
 - **Text and config files**: first 3,000 characters as a preview, with a note of the full token count.
 
-Essential files (priority 1) are **never** summarised.
+Focus files (priority 0) and essential files (priority 1) are **never** summarised.
 
 **Pass 2 — Summary → Omitted**
 
@@ -501,7 +548,7 @@ If still over budget after summarising everything possible, the lowest-priority 
 [Omitted to fit token budget: path/to/large-file.ts]
 ```
 
-Essential files are **never** omitted.
+Focus files and essential files are **never** omitted.
 
 The result display shows exactly what happened:
 

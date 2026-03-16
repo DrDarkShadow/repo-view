@@ -501,6 +501,7 @@ def _execute(
     skip_docs: bool,
     skip_tests: bool,
     respect_gitignore: bool,
+    focus_path: str = "",
 ) -> Optional[GenerateResult]:
     state = {"done": 0, "total": 0, "current": ""}
 
@@ -520,6 +521,7 @@ def _execute(
                 skip_tests=skip_tests,
                 respect_gitignore=respect_gitignore,
                 token_budget=TOKEN_BUDGET,
+                focus_path=focus_path,
                 progress_cb=_cb,
             )
         except Exception as e:
@@ -589,11 +591,16 @@ def _print_result(result: GenerateResult, elapsed: float) -> None:
         f"{bar}  [bold]{result.total_tokens:,}[/bold] / {TOKEN_BUDGET:,}  "
         f"[dim]({pct:.0f}%)[/dim]  {fit_label}",
     )
-    table.add_row("Full files",  f"[green]{result.files_full}[/green]")
-    table.add_row("Summarised",  f"[yellow]{result.files_summary}[/yellow]")
-    table.add_row("Skipped",     f"[dim]{result.files_metadata}[/dim]")
-    if result.files_omitted:
-        table.add_row("Omitted", f"[red]{result.files_omitted}[/red]")
+    if result.focus_path:
+        table.add_row("Focus",        f"[bold #7c3aed]{result.focus_path}[/bold #7c3aed]")
+        table.add_row("Focused files",f"[green]{result.files_full}[/green]")
+        table.add_row("Structure only",f"[dim]{result.files_structure_only}[/dim]")
+    else:
+        table.add_row("Full files",  f"[green]{result.files_full}[/green]")
+        table.add_row("Summarised",  f"[yellow]{result.files_summary}[/yellow]")
+        table.add_row("Skipped",     f"[dim]{result.files_metadata}[/dim]")
+        if result.files_omitted:
+            table.add_row("Omitted", f"[red]{result.files_omitted}[/red]")
 
     console.print(Panel(table, border_style="green", padding=(0, 1)))
 
@@ -741,6 +748,10 @@ def main(
         False, "--reset", "-r",
         help="Delete saved cache for this project and run the wizard fresh.",
     ),
+    focus: Optional[str] = typer.Option(
+        None, "--focus", "-f",
+        help="Focus on a specific folder or file (e.g. src/auth or src/auth/index.ts).",
+    ),
 ) -> None:
     """
     [bold #7c3aed]repoview[/bold #7c3aed] — Turn any codebase into LLM-ready context.
@@ -756,8 +767,12 @@ def main(
 
     if reset:
         _run_reset(path)
+    elif watch and focus:
+        _run_watch(path, focus_path=focus)
     elif watch:
         _run_watch(path)
+    elif focus:
+        _run_focus(path, focus_path=focus)
     elif quick:
         _run_quick(path)
     else:
@@ -796,6 +811,149 @@ def _run_quick(path: Optional[str]) -> None:
         _post_menu(result)
 
 
+
+def _run_focus(path: Optional[str], focus_path: str) -> None:
+    """
+    Focus mode — short wizard, only focused folder/file gets full content.
+
+    Flow:
+      Scan preview
+      Q1: Respect .gitignore?  (only if .gitignore exists)
+      Q2: Output filename?
+      Q3: Output location?
+      Confirm + generate
+    """
+    _banner()
+
+    input_path  = os.path.abspath(path or os.getcwd())
+    folder_name = os.path.basename(input_path.rstrip("/\\"))
+
+    if not os.path.exists(input_path):
+        console.print(f"[red]✗[/red] Path not found: {input_path}")
+        raise typer.Exit(1)
+
+    # Validate focus path exists
+    focus_abs = os.path.join(input_path, focus_path.replace("/", os.sep))
+    if not os.path.exists(focus_abs):
+        console.print(
+            f"  [red]✗[/red]  Focus path not found: [bold]{focus_path}[/bold]\n"
+            f"  [dim]Looked in: {focus_abs}[/dim]\n"
+        )
+        raise typer.Exit(1)
+
+    is_dir_focus = os.path.isdir(focus_abs)
+    focus_type   = "folder" if is_dir_focus else "file"
+
+    # ── Scan ─────────────────────────────────────────────────────────────────
+    scan = scan_project(input_path)
+    _show_scan(scan, folder_name)
+
+    # Show focus info
+    console.print(
+        Panel.fit(
+            Text.from_markup(
+                f"[bold #7c3aed]⚡  Focus mode[/]\n"
+                f"[dim]{focus_type}: [bold]{focus_path}[/bold][/dim]\n"
+                f"[dim]All other files will appear in tree only — no content.[/dim]"
+            ),
+            border_style="#7c3aed",
+            padding=(0, 2),
+        )
+    )
+    console.print()
+
+    # ── Q1: Gitignore (only if exists) ────────────────────────────────────────
+    respect_gitignore = True
+    if scan.has_gitignore:
+        console.print(
+            f"  [dim].gitignore found ({scan.gitignore_rules} rules).[/dim]\n"
+        )
+        respect_gitignore = _ask(
+            questionary.confirm,
+            message="Respect .gitignore?",
+            default=True,
+            style=CC_STYLE,
+        )
+        console.print()
+
+    # ── Q2: Output filename ───────────────────────────────────────────────────
+    # Derive a focused name: <folder>-<focus_slug>-context.txt
+    focus_slug   = focus_path.strip("/").replace("/", "-").replace(".", "-")
+    default_name = f"{folder_name}-{focus_slug}-context.txt"
+
+    console.print(f"  [dim]Default output name: [bold]{default_name}[/bold][/dim]\n")
+    out_name = _ask(
+        questionary.text,
+        message="Output file name:",
+        default=default_name,
+        style=CC_STYLE,
+    )
+    if not out_name.strip(): out_name = default_name
+    if not out_name.endswith(".txt"): out_name += ".txt"
+    console.print()
+
+    # ── Q3: Output location ───────────────────────────────────────────────────
+    inside_path = os.path.join(input_path, out_name)
+    parent_path = os.path.join(os.path.dirname(input_path), out_name)
+
+    loc_choice = _ask(
+        questionary.select,
+        message="Save output to:",
+        choices=[
+            questionary.Choice(f"Inside the project folder   ({inside_path})", value="inside"),
+            questionary.Choice(f"Next to the project folder  ({parent_path})", value="parent"),
+            questionary.Choice("Custom path…",                                  value="custom"),
+        ],
+        style=CC_STYLE,
+    )
+
+    if loc_choice == "inside":
+        output_path = inside_path
+    elif loc_choice == "parent":
+        output_path = parent_path
+    else:
+        raw = _ask(
+            questionary.path,
+            message="Enter output folder path:",
+            only_directories=True,
+            style=CC_STYLE,
+        )
+        output_path = os.path.join(os.path.abspath(os.path.expanduser(raw)), out_name)
+    console.print()
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    table = Table(show_header=False, box=None, padding=(0, 2), show_edge=False)
+    table.add_column(style="dim", justify="right", min_width=14)
+    table.add_column()
+    table.add_row("Source",    f"[bold]{input_path}[/bold]")
+    table.add_row("Focus",     f"[bold #7c3aed]{focus_path}[/bold #7c3aed]")
+    table.add_row("Output",    f"[bold]{output_path}[/bold]")
+    if scan.has_gitignore:
+        table.add_row(".gitignore",
+            "[green]respected[/green]" if respect_gitignore else "[yellow]ignored[/yellow]")
+    console.print(Panel(table, title="[bold]Ready to generate[/bold]",
+                        border_style="#7c3aed", padding=(0, 1)))
+    console.print()
+
+    go = _ask(questionary.confirm, message="Generate focused context?",
+              default=True, style=CC_STYLE)
+    if not go:
+        console.print("\n[yellow]Cancelled.[/yellow]\n")
+        raise typer.Exit(0)
+    console.print()
+
+    result = _execute(
+        input_path=input_path,
+        output_path=output_path,
+        skip_docs=False,      # focus mode includes everything in focus path
+        skip_tests=False,
+        respect_gitignore=respect_gitignore,
+        focus_path=focus_path,
+    )
+    if result:
+        _post_menu(result)
+
+
 def _run_reset(path: Optional[str]) -> None:
     """
     Delete the cache for this project and run the wizard fresh.
@@ -829,7 +987,7 @@ def _run_reset(path: Optional[str]) -> None:
     _run_wizard(preset_path=input_path)
 
 
-def _run_watch(path: Optional[str]) -> None:
+def _run_watch(path: Optional[str], focus_path: str = "") -> None:
     """
     Watch mode — auto incremental update on every file save.
 
@@ -888,13 +1046,16 @@ def _run_watch(path: Optional[str]) -> None:
         )
 
     # ── Load settings from cache ──────────────────────────────────────────────
-    output_path = cached.output_path
-    skip_docs   = cached.settings.get("skip_docs",         True)
-    skip_tests  = cached.settings.get("skip_tests",        True)
-    respect_gi  = cached.settings.get("respect_gitignore", True)
+    output_path  = cached.output_path
+    skip_docs    = cached.settings.get("skip_docs",         True)
+    skip_tests   = cached.settings.get("skip_tests",        True)
+    respect_gi   = cached.settings.get("respect_gitignore", True)
+    # --focus flag overrides cached focus_path (user may change it)
+    _watch_focus = focus_path or cached.settings.get("focus_path", "")
 
     # Build a readable settings summary line
     setting_parts = []
+    if _watch_focus: setting_parts.append(f"focus: {_watch_focus}")
     if skip_docs:   setting_parts.append("docs skipped")
     else:           setting_parts.append("docs included")
     if skip_tests:  setting_parts.append("tests skipped")
@@ -963,7 +1124,7 @@ def _run_watch(path: Optional[str]) -> None:
         affected = set(diff.modified) | set(diff.added)
         for e in entries:
             if not e.is_dir and e.relative_path in affected:
-                e.process(skip_docs=skip_docs, skip_tests=skip_tests)
+                e.process(skip_docs=skip_docs, skip_tests=skip_tests, focus_path=_watch_focus)
 
         with _lock:
             try:
