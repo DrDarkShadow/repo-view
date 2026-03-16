@@ -4,6 +4,7 @@ export { HowItWorks } from './HowItWorks';
 export { Features } from './Features';
 export { WatchMode } from './WatchMode';
 export { FocusMode } from './FocusMode';
+export { GitHubSupport } from './GitHubSupport';
 export { Commands } from './Commands';
 export { ForWho } from './ForWho';
 export { QuickStart } from './QuickStart';

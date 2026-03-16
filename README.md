@@ -88,6 +88,26 @@ repoview <path>
 
 Running `repoview` or `repoview <path>` launches the interactive wizard. Every question is conditional — you only see questions that are relevant to your specific project.
 
+### Source Selection
+
+The wizard's first prompt accepts any of:
+
+```
+◆  Project path, ZIP file, or GitHub URL:
+   › ./my-project              ← local folder
+   › ./archive.zip             ← zip file
+   › facebook/react            ← GitHub shorthand
+   › https://github.com/...    ← full GitHub URL
+```
+
+**Local folder** — standard behaviour, walks the directory tree.
+
+**ZIP file** — extracts to a temp folder and processes identically to a folder. Useful for downloaded archives or backups.
+
+**GitHub URL** — fetches branch list, lets you choose interactively, downloads the repo zip, extracts, and processes it. Temp folder cleaned up automatically.
+
+---
+
 ### Scan Preview
 
 Before any questions, repoview scans your project and shows:
@@ -343,6 +363,128 @@ Common workflow when settings need changing:
 repoview --reset ./my-project    # clear cache + wizard
 repoview --watch ./my-project    # now watch with new settings
 ```
+
+---
+
+### GitHub URL support
+
+Pass any GitHub URL or shorthand directly as the path argument. repoview will fetch the available branches, let you pick one interactively, download the repo as a zip, and process it exactly like a local folder.
+
+```bash
+rv https://github.com/facebook/react
+rv github.com/facebook/react
+rv facebook/react
+rv https://github.com/facebook/react/tree/canary
+```
+
+**Branch selection:**
+
+```
+  GitHub repository:  facebook/react
+
+  Fetching branches…
+
+◆  Select branch for facebook/react:
+   ❯  main        (default)
+      canary
+      experimental
+      0.14-stable
+      ✏️  Enter branch manually…
+```
+
+If the URL already includes a branch (`/tree/canary`), it is pre-selected in the list. If the GitHub API is unreachable, falls back to a text input with `main` as default.
+
+**Works with all flags:**
+
+```bash
+rv --quick facebook/react                  # instant, no questions
+rv --quick --copy facebook/react           # download + generate + copy
+rv --focus src/compiler facebook/react     # focused context
+rv --info facebook/react                   # stats without generating
+```
+
+The downloaded repo is extracted to a temp folder, processed, then the temp folder is deleted automatically.
+
+---
+
+### `rv` alias
+
+`rv` is a shorter alias for `repoview` — both are installed and identical.
+
+```bash
+rv ./my-project     # same as: repoview ./my-project
+rv facebook/react   # same as: repoview facebook/react
+```
+
+---
+
+### `--copy` / `-c`
+
+After generating the context file, automatically copy its full text to clipboard. Combine with `--quick` for a completely silent, zero-interaction workflow.
+
+```bash
+# Generate with all defaults + copy to clipboard, no questions at all
+repoview --quick --copy ./my-project
+
+# Interactive wizard + auto-copy when done
+repoview --copy ./my-project
+```
+
+If `pyperclip` is not installed, a warning is shown and the rest of the run completes normally.
+
+---
+
+### `--info` / `-i`
+
+Show a full breakdown of a project without generating anything. Useful for checking what repoview would do before committing to a run.
+
+```bash
+repoview --info
+repoview --info ./my-project
+repoview -i ./my-project
+```
+
+Output includes:
+
+- **Overview** — file count, total size, estimated tokens, whether it fits the budget
+- **File types** — top 12 extensions with count and category (code / config / docs / other)
+- **Skip / filter info** — how many doc files, test files, and what .gitignore contains
+- **Cache status** — when the project was last run, where the output file is, what settings were used
+
+Example:
+
+```
+╭─ Overview ────────────────────────────────────────╮
+│  Project       /path/to/my-project                │
+│  Files         147                                │
+│  Total size    3.1 MB                             │
+│  Est. tokens   ~218,000  (before filtering)       │
+│  Token budget  800,000  — fits comfortably        │
+╰───────────────────────────────────────────────────╯
+
+╭─ File Types ──────────────────────────────────────╮
+│  .ts      43    code                              │
+│  .tsx     28    code                              │
+│  .json    19    config                            │
+│  .md      12    docs                              │
+│  .css      8    code                              │
+╰───────────────────────────────────────────────────╯
+
+╭─ Skip / Filter Info ──────────────────────────────╮
+│  Docs (.md .txt …)   12 files — skipped by default│
+│  Test files          31 files — skipped by default│
+│  .gitignore          found  24 rules              │
+╰───────────────────────────────────────────────────╯
+
+╭─ Cache Status ────────────────────────────────────╮
+│  Last run      2h ago  (2025-03-16T14:32:11)      │
+│  Output file   my-project-context.txt  exists     │
+│  Settings      docs skipped • gitignore respected │
+│  Cached files  147                                │
+╰───────────────────────────────────────────────────╯
+```
+
+Nothing is written to disk. No questions asked.
 
 ---
 

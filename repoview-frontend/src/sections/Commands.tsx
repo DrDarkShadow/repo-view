@@ -2,11 +2,15 @@ import { SectionHeading, CommandBlock } from '../components';
 
 const commands = [
   { cmd: 'repoview', desc: 'Launch interactive wizard in current directory' },
-  { cmd: 'repoview ./my-project', desc: 'Wizard with path pre-filled' },
+  { cmd: 'rv ./my-project', desc: 'Short alias — same as repoview' },
   { cmd: 'repoview --quick ./my-project', desc: 'No questions asked, instant run with defaults' },
+  { cmd: 'repoview --focus src/auth', desc: 'Full content for src/auth only, rest is tree structure' },
   { cmd: 'repoview --watch ./my-project', desc: 'Live watch mode, auto-update on file changes' },
+  { cmd: 'repoview --copy --quick ./my-project', desc: 'Generate and auto-copy output to clipboard' },
+  { cmd: 'repoview --info ./my-project', desc: 'Deep project inspection — no generation, just stats' },
+  { cmd: 'repoview project.zip', desc: 'Process a ZIP file directly' },
+  { cmd: 'repoview https://github.com/user/repo', desc: 'Clone and process a GitHub repo (branch selection included)' },
   { cmd: 'repoview --reset ./my-project', desc: 'Clear cache and run fresh wizard' },
-  { cmd: 'repoview --version', desc: 'Show current repoview version' },
 ];
 
 export function Commands() {

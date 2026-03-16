@@ -5,6 +5,8 @@ import {
   Zap,
   Shield,
   RotateCcw,
+  Github,
+  FileArchive,
 } from 'lucide-react';
 import { SectionHeading, FeatureCard } from '../components';
 
@@ -38,6 +40,16 @@ const features = [
     icon: RotateCcw,
     title: 'Reset Flag',
     description: 'Wrong settings? Run --reset to clear the cache and launch the wizard fresh with one command.',
+  },
+  {
+    icon: Github,
+    title: 'GitHub URL Support',
+    description: 'Pass a GitHub repo URL directly. Fetches branches, lets you pick one, downloads and processes it automatically.',
+  },
+  {
+    icon: FileArchive,
+    title: 'ZIP File Support',
+    description: 'Point at a .zip file and repoview extracts it temporarily, processes it like a normal folder, then cleans up.',
   },
 ];
 

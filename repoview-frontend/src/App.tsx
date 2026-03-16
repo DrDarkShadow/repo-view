@@ -5,6 +5,7 @@ import {
   Features,
   WatchMode,
   FocusMode,
+  GitHubSupport,
   Commands,
   ForWho,
   QuickStart,
@@ -20,6 +21,7 @@ function App() {
       <Features />
       <WatchMode />
       <FocusMode />
+      <GitHubSupport />
       <Commands />
       <ForWho />
       <QuickStart />

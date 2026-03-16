@@ -291,38 +291,210 @@ def _post_menu_from_path(output_path: str) -> None:
     _post_menu(gr)
 
 
-def _run_wizard(preset_path: Optional[str] = None) -> None:
+
+def _resolve_input(raw: Optional[str]) -> tuple:
+    """
+    Resolve any input to (input_path, folder_name, temp_dir_or_None).
+
+    Handles:
+      GitHub URL / shorthand  → fetch branches → download zip → extract
+      ZIP file path           → extract to temp
+      Folder path             → use as-is
+      None                    → current directory
+
+    Caller must shutil.rmtree(temp_dir) when done if temp_dir is not None.
+    """
+    import shutil, tempfile, zipfile as _zf
+    from repoview.github import (
+        parse_github_url, fetch_branches, download_zip, GitHubError
+    )
+
+    # ── GitHub URL or shorthand ───────────────────────────────────────────────
+    if raw:
+        gh = parse_github_url(raw)
+        if gh:
+            console.print(
+                f"  [dim]GitHub repository:[/dim] "
+                f"[bold #7c3aed]{gh.owner}/{gh.repo}[/bold #7c3aed]\n"
+            )
+
+            # ── Fetch branches ────────────────────────────────────────────────
+            branches: list = []
+            try:
+                console.print("  [dim]Fetching branches…[/dim]")
+                branches = fetch_branches(gh)
+                console.print()
+            except GitHubError:
+                # API failed — will fall through to manual entry
+                console.print()
+
+            if branches:
+                # Build choices — pre-select branch from URL if in list
+                default_branch = gh.branch if gh.branch in branches else branches[0]
+                choices = [
+                    questionary.Choice(
+                        f"{b}  [dim](default)[/dim]" if b == default_branch else b,
+                        value=b,
+                    )
+                    for b in branches[:10]
+                ]
+                choices.append(questionary.Choice("✏️   Enter branch manually…", value="__manual__"))
+
+                selected = _ask(
+                    questionary.select,
+                    message=f"Select branch for {gh.owner}/{gh.repo}:",
+                    choices=choices,
+                    default=default_branch,
+                    style=CC_STYLE,
+                )
+            else:
+                selected = "__manual__"
+
+            if selected == "__manual__":
+                selected = _ask(
+                    questionary.text,
+                    message="Branch name:",
+                    default=gh.branch,
+                    style=CC_STYLE,
+                )
+                if not selected or not selected.strip():
+                    selected = "main"
+
+            gh.branch = selected.strip()
+            console.print()
+
+            # ── Download ──────────────────────────────────────────────────────
+            tmp      = tempfile.mkdtemp(prefix="repoview_")
+            zip_path = os.path.join(tmp, f"{gh.repo}.zip")
+
+            with Progress(
+                SpinnerColumn(spinner_name="dots", style="#7c3aed"),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=28, complete_style="#7c3aed",
+                          finished_style="#06b6d4"),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                console=console,
+                transient=True,
+            ) as prog:
+                task = prog.add_task(
+                    f"Downloading {gh.owner}/{gh.repo} [{gh.branch}]…",
+                    total=None,
+                )
+
+                def _dl_cb(done: int, total: int) -> None:
+                    if total:
+                        prog.update(
+                            task, completed=done, total=total,
+                            description=(
+                                f"Downloading [dim]{done//1024:,} KB"
+                                f" / {total//1024:,} KB[/dim]"
+                            ),
+                        )
+
+                try:
+                    download_zip(gh, zip_path, progress_cb=_dl_cb)
+                except GitHubError as e:
+                    shutil.rmtree(tmp, ignore_errors=True)
+                    console.print(f"\n[red]✗[/red]  {e}\n")
+                    raise typer.Exit(1)
+
+            console.print(
+                f"  [green]✔[/green]  Downloaded  "
+                f"[bold]{gh.owner}/{gh.repo}[/bold]  "
+                f"[dim]branch: {gh.branch}[/dim]\n"
+            )
+
+            # ── Extract ───────────────────────────────────────────────────────
+            extract_dir = os.path.join(tmp, "src")
+            os.makedirs(extract_dir, exist_ok=True)
+            with _zf.ZipFile(zip_path, "r") as zf:
+                zf.extractall(extract_dir)
+            os.remove(zip_path)
+
+            entries = os.listdir(extract_dir)
+            if len(entries) == 1 and os.path.isdir(
+                os.path.join(extract_dir, entries[0])
+            ):
+                input_path = os.path.join(extract_dir, entries[0])
+            else:
+                input_path = extract_dir
+
+            return input_path, gh.repo, tmp
+
+    # ── Resolve to absolute path ──────────────────────────────────────────────
+    resolved = os.path.abspath(os.path.expanduser(raw)) if raw else os.getcwd()
+
+    # ── ZIP file ──────────────────────────────────────────────────────────────
+    if resolved.lower().endswith(".zip"):
+        if not os.path.isfile(resolved):
+            console.print(
+                f"\n[red]✗[/red] ZIP file not found: [bold]{resolved}[/bold]\n"
+            )
+            raise typer.Exit(1)
+        folder_name = os.path.splitext(os.path.basename(resolved))[0]
+        console.print(
+            f"  [dim]Extracting[/dim] "
+            f"[bold]{os.path.basename(resolved)}[/bold][dim]…[/dim]\n"
+        )
+        tmp = tempfile.mkdtemp(prefix="repoview_")
+        try:
+            with _zf.ZipFile(resolved, "r") as zf:
+                zf.extractall(tmp)
+        except _zf.BadZipFile:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+            console.print(
+                f"\n[red]✗[/red] Not a valid ZIP file: "
+                f"[bold]{resolved}[/bold]\n"
+            )
+            raise typer.Exit(1)
+        entries = os.listdir(tmp)
+        if len(entries) == 1 and os.path.isdir(os.path.join(tmp, entries[0])):
+            input_path = os.path.join(tmp, entries[0])
+        else:
+            input_path = tmp
+        return input_path, folder_name, tmp
+
+    # ── Plain folder ──────────────────────────────────────────────────────────
+    if not os.path.exists(resolved):
+        console.print(
+            f"\n[red]✗[/red] Path not found: [bold]{resolved}[/bold]\n"
+        )
+        raise typer.Exit(1)
+    folder_name = os.path.basename(resolved.rstrip("/\\"))
+    return resolved, folder_name, None
+
+
+def _run_wizard(preset_path: Optional[str] = None, auto_copy: bool = False) -> None:
     _banner()
 
-    # ── Resolve path ─────────────────────────────────────────────────────────
+    # ── Resolve input — folder, zip, or GitHub URL ───────────────────────────
     if preset_path:
-        input_path = os.path.abspath(os.path.expanduser(preset_path))
+        input_path, folder_name, _temp_dir = _resolve_input(preset_path)
     else:
-        raw = _ask(
-            questionary.path,
-            message="Path to your project folder (Enter for current directory):",
+        raw_input = _ask(
+            questionary.text,
+            message="Project path, ZIP file, or GitHub URL:",
             default=os.getcwd(),
-            only_directories=True,
             style=CC_STYLE,
         )
-        input_path = os.path.abspath(os.path.expanduser(raw))
-
-    if not os.path.exists(input_path):
-        console.print(f"\n[red]✗[/red] Path not found: [bold]{input_path}[/bold]\n")
-        raise typer.Exit(1)
-
-    folder_name = os.path.basename(input_path.rstrip("/\\"))
+        console.print()
+        input_path, folder_name, _temp_dir = _resolve_input(raw_input.strip() or None)
 
     # ── Scan ─────────────────────────────────────────────────────────────────
     scan = scan_project(input_path)
     _show_scan(scan, folder_name)
 
-    # ── Diff check — offer incremental update if cache exists ────────────────
-    cached = load_cache(input_path)
-    if cached and os.path.exists(cached.output_path):
-        did_incremental = _try_incremental(input_path, cached, scan)
-        if did_incremental:
-            return   # user accepted incremental — we're done
+    # ── Diff check (folders only — zip is always fresh) ──────────────────────
+    if not is_zip:
+        cached = load_cache(input_path)
+        if cached and os.path.exists(cached.output_path):
+            did_incremental = _try_incremental(input_path, cached, scan)
+            if did_incremental:
+                if _temp_dir:
+                    import shutil; shutil.rmtree(_temp_dir, ignore_errors=True)
+                return
 
     # ── Q1: Skip docs? (always shown) ────────────────────────────────────────
     doc_info = (
@@ -461,7 +633,14 @@ def _run_wizard(preset_path: Optional[str] = None) -> None:
         respect_gitignore=respect_gitignore,
     )
 
+    # ── Cleanup temp dir from zip extract ────────────────────────────────────
+    if _temp_dir:
+        import shutil
+        shutil.rmtree(_temp_dir, ignore_errors=True)
+
     if result:
+        if auto_copy:
+            _auto_copy(result.output_path)
         _post_menu(result)
 
 
@@ -653,6 +832,25 @@ def _post_menu(result: GenerateResult) -> None:
         console.print()
 
 
+def _auto_copy(output_path: str) -> None:
+    """Silent auto-copy triggered by --copy flag. Shows one-line result."""
+    try:
+        import pyperclip
+        with open(output_path, encoding="utf-8") as f:
+            pyperclip.copy(f.read())
+        console.print(
+            "  [green]✔[/green]  Copied to clipboard  "
+            "[dim](--copy flag)[/dim]"
+        )
+    except ImportError:
+        console.print(
+            "  [yellow]⚠[/yellow]  --copy flag: pyperclip not installed.  "
+            "Run: [bold]pip install pyperclip[/bold]"
+        )
+    except Exception as e:
+        console.print(f"  [red]✗[/red]  --copy flag: could not copy — {e}")
+
+
 def _copy_text(output_path: str) -> None:
     try:
         import pyperclip
@@ -756,6 +954,10 @@ def main(
         False, "--info", "-i",
         help="Show project stats without generating anything.",
     ),
+    copy: bool = typer.Option(
+        False, "--copy", "-c",
+        help="After generating, auto-copy the output text to clipboard.",
+    ),
 ) -> None:
     """
     [bold #7c3aed]repoview[/bold #7c3aed] — Turn any codebase into LLM-ready context.
@@ -780,12 +982,12 @@ def main(
     elif focus:
         _run_focus(path, focus_path=focus)
     elif quick:
-        _run_quick(path)
+        _run_quick(path, auto_copy=copy)
     else:
-        _run_wizard(preset_path=path)
+        _run_wizard(preset_path=path, auto_copy=copy)
 
 
-def _run_quick(path: Optional[str]) -> None:
+def _run_quick(path: Optional[str], auto_copy: bool = False) -> None:
     """Non-interactive run with all defaults."""
     _banner()
     input_path = os.path.abspath(path or os.getcwd())
@@ -814,6 +1016,8 @@ def _run_quick(path: Optional[str]) -> None:
         respect_gitignore=scan.has_gitignore,
     )
     if result:
+        if auto_copy:
+            _auto_copy(result.output_path)
         _post_menu(result)
 
 

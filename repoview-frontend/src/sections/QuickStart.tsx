@@ -37,7 +37,7 @@ export function QuickStart() {
               <span className="text-brand-accent font-bold text-sm">3</span>
             </div>
             <div className="flex-grow">
-              <p className="text-gray-400 text-sm mb-2">Run repoview</p>
+              <p className="text-gray-400 text-sm mb-2">Run repoview (or rv for short)</p>
               <CommandBlock command="repoview" />
             </div>
           </div>
