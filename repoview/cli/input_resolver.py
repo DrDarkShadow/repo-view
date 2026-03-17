@@ -72,22 +72,28 @@ def _resolve_github(gh) -> Tuple[str, str, str]:
 
     if branches:
         default_branch = gh.branch if gh.branch in branches else branches[0]
-        choices = [
-            questionary.Choice(
-                f"{b}  [dim](default)[/dim]" if b == default_branch else b,
-                value=b,
-            )
-            for b in branches[:10]
-        ]
-        choices.append(questionary.Choice("✏️   Enter branch manually…", value="__manual__"))
+        
+        # If only one branch, don't ask - just use it
+        if len(branches) == 1:
+            selected = branches[0]
+            console.print(f"  [dim]Using branch:[/dim] [bold]{selected}[/bold]\n")
+        else:
+            choices = [
+                questionary.Choice(
+                    f"{b}  [dim](default)[/dim]" if b == default_branch else b,
+                    value=b,
+                )
+                for b in branches[:10]
+            ]
+            choices.append(questionary.Choice("✏️   Enter branch manually…", value="__manual__"))
 
-        selected = ask(
-            questionary.select,
-            message=f"Select branch for {gh.owner}/{gh.repo}:",
-            choices=choices,
-            default=default_branch,
-            style=CC_STYLE,
-        )
+            selected = ask(
+                questionary.select,
+                message=f"Select branch for {gh.owner}/{gh.repo}:",
+                choices=choices,
+                default=default_branch,
+                style=CC_STYLE,
+            )
     else:
         selected = "__manual__"
 

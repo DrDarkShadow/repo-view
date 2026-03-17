@@ -167,13 +167,14 @@ def run_wizard(preset_path: Optional[str] = None, auto_copy: bool = False, skip_
         output_path = parent_path
     else:
         raw_loc = ask(
-            questionary.path,
+            questionary.text,
             message="Enter output folder path:",
-            only_directories=True,
             style=CC_STYLE,
         )
+        # Clean up the path - remove quotes and normalize
+        clean_path = raw_loc.strip().strip("'\"")
         output_path = os.path.join(
-            os.path.abspath(os.path.expanduser(raw_loc)), out_name
+            os.path.abspath(os.path.expanduser(clean_path)), out_name
         )
     console.print()
 
@@ -301,6 +302,11 @@ def _try_incremental(input_path: str, cached, scan) -> bool:
         return False
 
     upd = result_box[0]
+    if upd is None:
+        console.print(f"\n[red]✗ Update failed:[/red] No result returned")
+        console.print("[dim]Falling back to full regeneration…[/dim]\n")
+        return False
+        
     print_update_result(upd, time.time() - start)
 
     gr = GenerateResult(

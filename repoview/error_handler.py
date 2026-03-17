@@ -52,6 +52,13 @@ class GitHubError(RepoviewError):
 def handle_error(error: Exception, context: str = "") -> None:
     """Display user-friendly error message and exit."""
     
+    # Import typer here to avoid circular imports
+    import typer
+    
+    # Normal exit - don't show as error
+    if isinstance(error, typer.Exit):
+        sys.exit(error.exit_code)
+    
     # Known repoview errors - show clean message
     if isinstance(error, RepoviewError):
         console.print(f"\n[red]✗ Error:[/red] {error.message}")

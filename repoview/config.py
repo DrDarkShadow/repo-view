@@ -11,15 +11,12 @@ PRIORITY_METADATA_ONLY       = 10
 
 # ── Essential filenames (always included at full content) ─────────────────────
 ESSENTIAL_FILENAMES = {
-    "requirements.txt", "pipfile", "pyproject.toml", "package.json",
+    "requirements.txt", "pyproject.toml", "package.json",
     "composer.json", "gemfile", "dockerfile", "makefile", "readme.md",
-    "readme", "contributing.md", "license.md", "license", "settings.py",
+    "readme", "contributing.md", "settings.py",
     "manage.py", "app.py", "main.py", "index.py", "server.py",
-    "vite.config.js", "vite.config.ts", "webpack.config.js",
     "pom.xml", "build.gradle", "docker-compose.yml", "docker-compose.yaml",
-    ".env.example", ".env.sample", "cargo.toml", "go.mod", "go.sum",
-    "tsconfig.json", ".eslintrc.json", ".eslintrc.js", "jest.config.js",
-    "jest.config.ts", "next.config.js", "next.config.ts",
+    ".env.example", ".env.sample", "cargo.toml", "go.mod", "go.sum"
 }
 
 # ── Code extensions ───────────────────────────────────────────────────────────
