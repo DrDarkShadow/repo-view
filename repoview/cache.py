@@ -88,15 +88,27 @@ class ProjectCache:
 
 def _cache_dir() -> Path:
     """~/.repoview/cache/  — created on first use."""
-    path = Path.home() / ".repoview" / "cache"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    try:
+        path = Path.home() / ".repoview" / "cache"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    except (OSError, PermissionError) as e:
+        # Fallback to temp directory if home directory is not accessible
+        import tempfile
+        fallback_path = Path(tempfile.gettempdir()) / ".repoview" / "cache"
+        fallback_path.mkdir(parents=True, exist_ok=True)
+        return fallback_path
 
 
 def _project_id(project_path: str) -> str:
     """Short SHA1 of the normalised absolute project path."""
-    norm = os.path.normcase(os.path.abspath(project_path))
-    return hashlib.sha1(norm.encode()).hexdigest()[:16]
+    try:
+        norm = os.path.normcase(os.path.abspath(project_path))
+        return hashlib.sha1(norm.encode()).hexdigest()[:16]
+    except (OSError, UnicodeEncodeError) as e:
+        # Fallback for paths with special characters or encoding issues
+        import uuid
+        return str(uuid.uuid4()).replace("-", "")[:16]
 
 
 def cache_path_for(project_path: str) -> Path:

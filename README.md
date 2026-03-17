@@ -856,7 +856,7 @@ Get your API token at: https://pypi.org/manage/account/token/
 
 ---
 
-## Requirements
+## Requirements:
 
 | Package | Version | Purpose |
 |---------|---------|---------|
